@@ -409,9 +409,10 @@ canvas.addEventListener("touchstart", e => {
   for (let i = 0; i < touches.length; i++) {
     const x = touches[i].clientX;
     const y = touches[i].clientY;
-    const note = Math.floor((x / canvas.width) * 12); // 12 semitones
+    const note = Math.floor((x / canvas.width) * 12);
     const velocity = Math.floor(((canvas.height - y) / canvas.height) * 127);
     activeNotes[note] = velocity;
+    notes[note] = { velocity }; // <-- Also update notes for 3D Plane
   }
 });
 
@@ -422,6 +423,7 @@ canvas.addEventListener("touchend", e => {
     const x = touches[i].clientX;
     const note = Math.floor((x / canvas.width) * 12);
     delete activeNotes[note];
+    delete notes[note]; // <-- Clear notes as well
   }
 });
 
