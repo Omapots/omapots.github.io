@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Tiled 3D Plane</title>
+  <style>
+    body { background: black; margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<div style="position:fixed;top:10px;left:10px;z-index:10;color:white;font-family:sans-serif;font-size:14px;">
+  <label for="modeSelect">Mode:</label>
+  <select id="modeSelect" onchange="setMode(this.value)">
+    <option value="default">Default</option>
+    <option value="glass">Glass Shine</option>
+    <option value="psy">Psy Warp</option>
+  </select>
+</div>
+<canvas id="canvas"></canvas>
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const resolution = 6;
+const spacing = 208;
+const rotation = { x: -Math.PI / 2.1, y: 0 }; // near-flat tilt
+let notes = {};
+let defaultRotation = { x: -Math.PI / 2.1, y: 0 };
+let colorLerpSpeed = 0.1;
+
+function project3D([x, y, z]) {
+  const scale = 600 / (z + 1200);
+  return [
+    canvas.width / 2 + x * scale,
+    canvas.height / 2 + y * scale
+  ];
+}
+
+function rotate([x, y, z], rx, ry) {
+  let cosX = Math.cos(rx), sinX = Math.sin(rx);
+  let cosY = Math.cos(ry), sinY = Math.sin(ry);
+  let dy = y * cosX - z * sinX;
+  let dz = y * sinX + z * cosX;
+  let dx = x * cosY - dz * sinY;
+      dz = x * sinY + dz * cosY;
+  return [dx, dy, dz];
+}
+
+function warpZ(x, y) {
+  const id = `${x.toFixed(1)},${y.toFixed(1)}`;
+  if (!warpZ.cache) warpZ.cache = {};
+  if (!warpZ.cache[id]) warpZ.cache[id] = 0;
+
+  let targetZ = 0;
+  for (let note in notes) {
+    const v = Math.pow(notes[note].velocity / 127, 1.0);
+    const n = parseInt(note) % 12;
+    const intensity = v * 2400;
+    switch (n) {
+      case 0: {
+        const radius = 900;
+        const dist = Math.sqrt(x * x + y * y);
+        targetZ += (-Math.sqrt(Math.max(0, radius * radius - dist * dist)) + radius) * v * 4;
+        break;
+      }
+      case 1: {
+        const cornerX = -((resolution - 1) / 2) * spacing;
+        const cornerY = -((resolution - 1) / 2) * spacing;
+        const dx = x - cornerX;
+        const dy = y - cornerY;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        targetZ += (1 - Math.min(d / (spacing * resolution), 1)) * intensity * 2.0;
+        break;
+      }
+      case 2: {
+        targetZ += Math.sin((x + y) * 0.05) * intensity * 0.7;
+        break;
+      }
+      case 3: {
+        targetZ += Math.sin((x * 0.07 + y * 0.13)) * Math.cos((x - y) * 0.05) * intensity * 1.4;
+        break;
+      }
+      case 4: {
+        targetZ += Math.cos(y * 0.1) * intensity * 0.9;
+        break;
+      }
+      case 5: {
+        const d = Math.sqrt(x * x + y * y);
+        targetZ += Math.exp(-d * 0.005) * intensity * 2.5;
+        break;
+      }
+      case 6: {
+        targetZ += Math.sin(x * 0.1) * Math.cos(y * 0.1) * intensity * 1.0;
+        break;
+      }
+      case 7: {
+        targetZ += Math.sin(x * 0.1) * intensity * 0.6;
+        break;
+      }
+      case 8: {
+        targetZ += Math.sin(y * 0.1) * intensity * 0.6;
+        break;
+      }
+      case 9: {
+        const d = Math.sqrt(x * x + y * y);
+        targetZ += -Math.exp(-d * 0.01) * intensity * 3.5;
+        break;
+      }
+      case 10: {
+        targetZ += Math.sin(x * 0.05 + y * 0.05) * Math.cos(x * 0.05 - y * 0.05) * intensity * 0.75;
+        break;
+      }
+      case 11: {
+        const d = Math.sqrt(x * x + y * y);
+        targetZ += Math.cos(d * 0.01) * intensity * 0.65;
+        break;
+      }
+    }
+  }
+
+  // Smoothly ease toward targetZ and retain 30% of previous warp
+  const easedZ = warpZ.cache[id] + (targetZ * 0.3 - warpZ.cache[id]) * 0.1;
+  warpZ.cache[id] = easedZ;
+  return easedZ;
+}
+
+function drawPlane() {
+  let lastColor = window.lastNoteColor || [255, 255, 255];
+  let noteColor = [...lastColor];
+
+  if (Object.keys(notes).length > 0) {
+    const harmonyNotes = Object.keys(notes).map(n => parseInt(n) % 12);
+    let r = 0, g = 0, b = 0;
+    for (let n of harmonyNotes) {
+      r += (n * 21) % 256;
+      g += (255 - n * 15) % 256;
+      b += (n * 37) % 256;
+    }
+    r = Math.floor(r / harmonyNotes.length);
+    g = Math.floor(g / harmonyNotes.length);
+    b = Math.floor(b / harmonyNotes.length);
+    noteColor[0] += (r - noteColor[0]) * colorLerpSpeed;
+    noteColor[1] += (g - noteColor[1]) * colorLerpSpeed;
+    noteColor[2] += (b - noteColor[2]) * colorLerpSpeed;
+    window.lastNoteColor = noteColor.map(Math.round);
+  }
+
+  ctx.fillStyle = "black";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  let totalVelocity = Object.values(notes).reduce((sum, n) => sum + n.velocity, 0);
+  let velocityRatio = totalVelocity / (127 * resolution);
+  let curved = Math.pow(velocityRatio, 2.2);
+
+  let brightness = Math.min(255, Math.floor(100 + curved * 400));
+  ctx.shadowColor = `rgba(${noteColor[0]}, ${noteColor[1]}, ${noteColor[2]}, ${Math.min(1, curved * 1.2)})`;
+  ctx.shadowBlur = curved * 20;
+  ctx.strokeStyle = `rgb(${noteColor[0]}, ${noteColor[1]}, ${noteColor[2]})`;
+  ctx.lineWidth = 2 + curved * 6;
+
+  function worldCoord(gx, gy) {
+    const wx = (gx - (resolution - 1) / 2) * spacing;
+    const wy = (gy - (resolution - 1) / 2) * spacing;
+    const wz = warpZ(wx, wy);
+    return rotate([wx, wy, wz], rotation.x, rotation.y);
+  }
+
+  for (let x = 0; x < resolution - 1; x++) {
+    for (let y = 0; y < resolution - 1; y++) {
+      let v1 = worldCoord(x, y);
+      
+      const p1 = project3D(v1);
+      let v2 = worldCoord(x + 1, y);
+      
+      const p2 = project3D(v2);
+      let v3 = worldCoord(x + 1, y + 1);
+      
+      const p3 = project3D(v3);
+      let v4 = worldCoord(x, y + 1);
+      
+      const p4 = project3D(v4);
+
+      ctx.beginPath();
+      ctx.moveTo(...p1);
+      ctx.lineTo(...p2);
+      ctx.lineTo(...p3);
+      ctx.lineTo(...p4);
+      ctx.closePath();
+      const avgY = (p1[1] + p2[1] + p3[1] + p4[1]) / 4;
+      const faceNormalZ = (avgY - canvas.height / 2) / canvas.height;
+      const normalTilt = Math.abs(faceNormalZ);
+      const shine = 0.01 + Math.pow(Math.max(0, faceNormalZ), 1.4) * 0.45;
+      const angleHueShift = Math.floor((normalTilt) * 40);
+      const hue = angleHueShift;
+      const blend = (c, amt) => Math.floor(c + (255 - c) * amt);
+      const r = blend(noteColor[0], normalTilt);
+      const g = blend(noteColor[1], normalTilt);
+      const b = blend(noteColor[2], normalTilt);
+      const alpha = 0.2 + Math.pow(normalTilt, 2.0) * 1.2;
+      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${Math.min(1, alpha).toFixed(3)})`;
+      ctx.fill();
+
+      // Specular highlight
+      const shineAlpha = Math.pow(normalTilt, 6.0) * 0.6;
+      if (shineAlpha > 0.01) {
+        const centerX = (p1[0] + p2[0] + p3[0] + p4[0]) / 4;
+        const centerY = (p1[1] + p2[1] + p3[1] + p4[1]) / 4;
+        const grad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, 60);
+        grad.addColorStop(0, `rgba(255,255,255,${shineAlpha.toFixed(3)})`);
+        grad.addColorStop(1, `rgba(255,255,255,0)`);
+        ctx.fillStyle = grad;
+        ctx.fill();
+      }
+
+      
+      ctx.stroke();
+    }
+  }
+}
+
+let currentMode = 'default';
+function setMode(mode) {
+  currentMode = mode;
+  // Here you could toggle behavior/visuals depending on selected mode
+  // Currently this is a placeholder
+  console.log('Mode switched to', mode);
+}
+
+function animate() {
+  const harmonyNotes = Object.keys(notes).map(n => parseInt(n));
+  const harmony = harmonyNotes.length > 1;
+
+  if (harmony) {
+    const root = harmonyNotes[0] % 12;
+    const intervalSum = harmonyNotes.reduce((a, b) => a + b, 0) % 24;
+    const dirX = (root % 3 === 0) ? 1 : -1;
+    const dirY = (intervalSum % 2 === 0) ? 1 : -1;
+    rotation.x += dirX * 0.0015;
+    rotation.y += dirY * 0.0012;
+  } else {
+    rotation.x += (defaultRotation.x - rotation.x) * 0.05;
+    rotation.y += (defaultRotation.y - rotation.y) * 0.05;
+  }
+
+  drawPlane();
+  requestAnimationFrame(animate);
+}
+
+function onMIDIMessage(msg) {
+  const [status, data1, data2] = msg.data;
+  const cmd = status & 0xf0;
+
+  if (cmd === 0x90 && data2 > 0) {
+    notes[data1] = { velocity: data2 };
+  } else if (cmd === 0x80 || (cmd === 0x90 && data2 === 0)) {
+    delete notes[data1];
+  }
+
+  if ((status & 0xf0) === 0xB0 && data1 === 21) {
+    colorLerpSpeed = data2 / 127 * 0.5;
+  }
+}
+
+navigator.requestMIDIAccess().then(midiAccess => {
+  for (const input of midiAccess.inputs.values()) {
+    input.onmidimessage = onMIDIMessage;
+  }
+});
+
+animate();
+</script>
+</body>
+</html>
